@@ -1,3 +1,5 @@
+require('dotenv').config();
+const HDWalletProvider = require('@truffle/hdwallet-provider');
 /**
  * Use this file to configure your truffle project. It's seeded with some
  * common settings for different networks and features like migrations,
@@ -58,17 +60,30 @@ module.exports = {
    */
 
   networks: {
+    amoy: {
+      provider: () => new HDWalletProvider({
+        privateKeys: [process.env.PRIVATE_KEY],
+        providerOrUrl: `https://rpc-amoy.polygon.technology`,
+      }),
+      network_id: 80002,
+      confirmations: 2,
+      timeoutBlocks: 200,
+      skipDryRun: true,
+      gasPrice: 30000000000,
+      gas: 5000000,
+      production: true
+    },
     // Useful for testing. The `development` name is special - truffle uses it by default
     // if it's defined here and no other network is specified at the command line.
     // You should run a client (like ganache, geth, or parity) in a separate terminal
     // tab if you use this network and you must also set the `host`, `port` and `network_id`
     // options below to some value.
     //
-    // development: {
-    //  host: "127.0.0.1",     // Localhost (default: none)
-    //  port: 8545,            // Standard Ethereum port (default: none)
-    //  network_id: "*",       // Any network (default: none)
-    // },
+    development: {
+     host: "127.0.0.1",     // Localhost (default: none)
+     port: 8545,            // Standard Ethereum port (default: none)
+     network_id: "*",       // Any network (default: none)
+    },
     //
     // An additional network, but with some advanced options…
     // advanced: {
@@ -108,13 +123,13 @@ module.exports = {
     solc: {
       version: "0.8.21",      // Fetch exact version from solc-bin (default: truffle's version)
       // docker: true,        // Use "0.5.1" you've installed locally with docker (default: false)
-      // settings: {          // See the solidity docs for advice about optimization and evmVersion
-      //  optimizer: {
-      //    enabled: false,
-      //    runs: 200
-      //  },
+      settings: {          // See the solidity docs for advice about optimization and evmVersion
+       optimizer: {
+         enabled: true,
+         runs: 200
+       },
       //  evmVersion: "byzantium"
-      // }
+      }
     }
   },
 
@@ -138,4 +153,8 @@ module.exports = {
   //     }
   //   }
   // }
+  plugins: ['truffle-plugin-verify'],
+  api_keys: {
+    OKLink: process.env.OKLINK_API_KEY
+  }
 };

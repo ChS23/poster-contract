@@ -1,4 +1,4 @@
-.env
+contract/.env
 .idea/
 node_modules/
-package-lock.json
+contract/package-lock.json
