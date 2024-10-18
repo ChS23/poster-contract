@@ -2,7 +2,6 @@
 
 import React, {useCallback, useEffect, useState} from 'react';
 import Web3 from 'web3';
-import {keccak256} from 'web3-utils';
 import {getContract} from '@/utils/contract';
 import {AnimatePresence, motion} from 'framer-motion';
 
@@ -124,30 +123,38 @@ export default function Home() {
         if (!contractInstance || !web3Instance) return;
         setIsSearching(true);
         console.log("Loading posts...");
+
         try {
+            // Get the latest block number
             const latestBlock = Number(await web3Instance.eth.getBlockNumber());
             let fromBlock = Math.max(0, latestBlock - BLOCK_RANGE);
             let allPosts: Post[] = [];
 
+            // Loop through block ranges
             while (fromBlock <= latestBlock) {
                 const toBlock = Math.min(fromBlock + BLOCK_RANGE, latestBlock);
+
+                // Apply filter by tag hash if provided
+                const filter = tag ? {tag: tag} : {};
+
+                // Fetch events with optional filtering by tag
                 const events = await contractInstance.getPastEvents('NewPost', {
                     fromBlock: fromBlock,
                     toBlock: toBlock,
+                    filter: filter,
                 });
+
                 console.log(`Fetched events from block ${fromBlock} to ${toBlock}`);
+
+                // Map events to post structure
                 const loadedPosts: Post[] = events.map((event: any) => ({
                     user: event.returnValues.user,
                     content: event.returnValues.content,
                     tag: event.returnValues.tag,
                 }));
+
                 allPosts = [...loadedPosts, ...allPosts];
                 fromBlock = toBlock + 1;
-            }
-
-            if (tag) {
-                const tagHash = keccak256(tag);
-                allPosts = allPosts.filter(post => post.tag === tagHash);
             }
 
             setPosts(allPosts);
@@ -159,6 +166,7 @@ export default function Home() {
             setIsSearching(false);
         }
     };
+
 
     const handlePost = async () => {
         if (!contract || !account || isPosting) return;
@@ -213,10 +221,9 @@ export default function Home() {
         }
     };
 
-    const uniqueTags = Array.from(new Set(posts.map(post => post.tag)));
-
     return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-900 via-indigo-800 to-blue-900 text-white">
+        <div
+            className="min-h-screen bg-gradient-to-br from-purple-900 via-indigo-800 to-blue-900 text-white flex flex-col">
             <header className="py-6 px-4 sm:px-6 lg:px-8">
                 <div className="max-w-7xl mx-auto flex justify-between items-center">
                     <h1 className="text-3xl font-extrabold">Poster DApp</h1>
@@ -236,8 +243,8 @@ export default function Home() {
                 </div>
             </header>
 
-            <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-                <div className="px-4 py-6 sm:px-0">
+            <main className="flex-1 max-w-7xl mx-auto py-6 sm:px-6 lg:px-8 overflow-hidden">
+                <div className="px-4 py-6 sm:px-0 h-full">
                     <AnimatePresence>
                         {errorMessage && (
                             <motion.div
@@ -251,7 +258,7 @@ export default function Home() {
                         )}
                     </AnimatePresence>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 h-full">
                         <motion.div
                             initial={{opacity: 0, x: -50}}
                             animate={{opacity: 1, x: 0}}
@@ -288,7 +295,7 @@ export default function Home() {
                             initial={{opacity: 0, x: 50}}
                             animate={{opacity: 1, x: 0}}
                             transition={{delay: 0.4}}
-                            className="bg-white bg-opacity-10 p-6 rounded-lg shadow-xl"
+                            className="bg-white bg-opacity-10 p-6 rounded-lg shadow-xl flex flex-col h-full"
                         >
                             <h2 className="text-2xl font-bold mb-4">Search Posts</h2>
                             <div className="flex space-x-2 mb-6">
@@ -317,23 +324,26 @@ export default function Home() {
                                     <p className="mt-4 text-lg">Searching posts...</p>
                                 </div>
                             ) : posts.length > 0 ? (
-                                <motion.div layout className="space-y-6">
-                                    <AnimatePresence>
-                                        {posts.map((post, index) => (
-                                            <motion.div
-                                                key={index}
-                                                initial={{opacity: 0, y: 50}}
-                                                animate={{opacity: 1, y: 0}}
-                                                exit={{opacity: 0, y: 50}}
-                                                className="bg-white bg-opacity-20 p-4 rounded-lg shadow-md hover:shadow-lg transition duration-300"
-                                            >
-                                                <p className="text-sm text-purple-300 mb-2">User: {post.user.slice(0, 6)}...{post.user.slice(-4)}</p>
-                                                <p className="text-lg mb-2">{post.content}</p>
-                                                <p className="text-sm text-purple-300">Tag: {post.tag.slice(0, 2)}...{post.tag.slice(-2)}</p>
-                                            </motion.div>
-                                        ))}
-                                    </AnimatePresence>
-                                </motion.div>
+                                <div
+                                    className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-purple-700 scrollbar-track-purple-300 max-h-[calc(100vh-300px)]">
+                                    <motion.div layout className="space-y-6">
+                                        <AnimatePresence>
+                                            {posts.map((post, index) => (
+                                                <motion.div
+                                                    key={index}
+                                                    initial={{opacity: 0, y: 50}}
+                                                    animate={{opacity: 1, y: 0}}
+                                                    exit={{opacity: 0, y: 50}}
+                                                    className="bg-white bg-opacity-20 p-4 rounded-lg shadow-md hover:shadow-lg transition duration-300"
+                                                >
+                                                    <p className="text-sm text-purple-300 mb-2">User: {post.user.slice(0, 6)}...{post.user.slice(-4)}</p>
+                                                    <p className="text-lg mb-2">{post.content}</p>
+                                                    <p className="text-sm text-purple-300">Tag: {post.tag.slice(0, 2)}...{post.tag.slice(-2)}</p>
+                                                </motion.div>
+                                            ))}
+                                        </AnimatePresence>
+                                    </motion.div>
+                                </div>
                             ) : (
                                 <p className="text-center text-lg">No posts found. Try searching for a different
                                     tag.</p>
