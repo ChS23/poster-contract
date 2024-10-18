@@ -125,19 +125,15 @@ export default function Home() {
         console.log("Loading posts...");
 
         try {
-            // Get the latest block number
             const latestBlock = Number(await web3Instance.eth.getBlockNumber());
             let fromBlock = Math.max(0, latestBlock - BLOCK_RANGE);
             let allPosts: Post[] = [];
 
-            // Loop through block ranges
             while (fromBlock <= latestBlock) {
                 const toBlock = Math.min(fromBlock + BLOCK_RANGE, latestBlock);
 
-                // Apply filter by tag hash if provided
                 const filter = tag ? {tag: tag} : {};
 
-                // Fetch events with optional filtering by tag
                 const events = await contractInstance.getPastEvents('NewPost', {
                     fromBlock: fromBlock,
                     toBlock: toBlock,
@@ -146,7 +142,6 @@ export default function Home() {
 
                 console.log(`Fetched events from block ${fromBlock} to ${toBlock}`);
 
-                // Map events to post structure
                 const loadedPosts: Post[] = events.map((event: any) => ({
                     user: event.returnValues.user,
                     content: event.returnValues.content,
