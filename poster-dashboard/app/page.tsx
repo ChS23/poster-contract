@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Web3 from 'web3';
+import { keccak256 } from 'web3-utils';
 import { getContract } from '@/utils/contract';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface Post {
   user: string;
@@ -11,9 +13,10 @@ interface Post {
 }
 
 const BLOCK_RANGE = 5000;
-const POSTS_PER_PAGE = 10;
+const POSTS_PER_PAGE = 5;
 const AMOY_CHAIN_ID = '0x13882';
 const AMOY_RPC_URL = 'https://rpc-amoy.polygon.technology';
+const MAX_TAG_LENGTH = 20;
 
 declare global {
   interface Window {
@@ -27,16 +30,15 @@ export default function Home() {
   const [account, setAccount] = useState<string>('');
   const [posts, setPosts] = useState<Post[]>([]);
   const [newPost, setNewPost] = useState({ content: '', tag: '' });
-  const [filter, setFilter] = useState('');
+  const [searchTag, setSearchTag] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isPosting, setIsPosting] = useState(false);
-  const [loadingPosts, setLoadingPosts] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
 
   const switchToAmoyNetwork = async () => {
     if (!window.ethereum) return false;
-
     try {
       await window.ethereum.request({
         method: 'wallet_switchEthereumChain',
@@ -48,19 +50,13 @@ export default function Home() {
         try {
           await window.ethereum.request({
             method: 'wallet_addEthereumChain',
-            params: [
-              {
-                chainId: AMOY_CHAIN_ID,
-                chainName: 'Polygon Amoy Testnet',
-                nativeCurrency: {
-                  name: 'POL',
-                  symbol: 'POL',
-                  decimals: 18
-                },
-                rpcUrls: [AMOY_RPC_URL],
-                blockExplorerUrls: ['https://www.oklink.com/amoy'],
-              },
-            ],
+            params: [{
+              chainId: AMOY_CHAIN_ID,
+              chainName: 'Polygon Amoy Testnet',
+              nativeCurrency: { name: 'POL', symbol: 'POL', decimals: 18 },
+              rpcUrls: [AMOY_RPC_URL],
+              blockExplorerUrls: ['https://www.oklink.com/amoy'],
+            }],
           });
           return true;
         } catch (addError) {
@@ -88,10 +84,10 @@ export default function Home() {
             }
           }
           setAccount(accounts[0]);
-          const contractInstance = getContract(web3Instance);
-          setContract(contractInstance);
-          await loadPosts(contractInstance, web3Instance);
         }
+        const contractInstance = getContract(web3Instance);
+        setContract(contractInstance);
+        await loadPosts(contractInstance, web3Instance);
       } catch (error) {
         console.error("Failed to initialize", error);
         setErrorMessage("Failed to initialize. Please try again.");
@@ -117,9 +113,6 @@ export default function Home() {
       }
       const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
       setAccount(accounts[0]);
-      const contractInstance = getContract(web3);
-      setContract(contractInstance);
-      await loadPosts(contractInstance, web3);
       console.log("Wallet connected:", accounts[0]);
     } catch (error) {
       console.error("Failed to connect to MetaMask", error);
@@ -129,20 +122,20 @@ export default function Home() {
     }
   };
 
-  const loadPosts = async (contractInstance: any, web3Instance: Web3) => {
+  const loadPosts = async (contractInstance: any, web3Instance: Web3, tag?: string) => {
     if (!contractInstance || !web3Instance) return;
-    setLoadingPosts(true);
+    setIsSearching(true);
     console.log("Loading posts...");
     try {
-      const latestBlock = parseInt(String(await web3Instance.eth.getBlockNumber()));
+      const latestBlock = Number(await web3Instance.eth.getBlockNumber());
       let fromBlock = Math.max(0, latestBlock - BLOCK_RANGE);
       let allPosts: Post[] = [];
 
       while (fromBlock <= latestBlock) {
         const toBlock = Math.min(fromBlock + BLOCK_RANGE, latestBlock);
         const events = await contractInstance.getPastEvents('NewPost', {
-          fromBlock: fromBlock.toString(),
-          toBlock: toBlock.toString(),
+          fromBlock: fromBlock,
+          toBlock: toBlock,
         });
         console.log(`Fetched events from block ${fromBlock} to ${toBlock}`);
         const loadedPosts: Post[] = events.map((event: any) => ({
@@ -154,13 +147,18 @@ export default function Home() {
         fromBlock = toBlock + 1;
       }
 
+      if (tag) {
+        const tagHash = keccak256(tag);
+        allPosts = allPosts.filter(post => post.tag === tagHash);
+      }
+
       setPosts(allPosts);
       console.log("Posts loaded successfully.");
     } catch (error) {
       console.error("Error loading posts:", error);
       setErrorMessage("Error loading posts. Please try again.");
     } finally {
-      setLoadingPosts(false);
+      setIsSearching(false);
     }
   };
 
@@ -170,7 +168,6 @@ export default function Home() {
     setErrorMessage('');
 
     try {
-      // Check network
       const chainId = await web3!.eth.getChainId();
       if (chainId !== BigInt(parseInt(AMOY_CHAIN_ID, 16))) {
         const switched = await switchToAmoyNetwork();
@@ -179,28 +176,21 @@ export default function Home() {
         }
       }
 
-      // Check balance
       const balance = await web3!.eth.getBalance(account);
-      console.log("Account balance:", web3!.utils.fromWei(balance, 'ether'), "POL");
-
       if (parseFloat(web3!.utils.fromWei(balance, 'ether')) <= 0) {
         throw new Error("Insufficient balance to post. Please add some POL to your account.");
       }
 
-      // Validate input
-      if (newPost.content.trim() === '' || newPost.tag.trim() === '') {
-        throw new Error("Content and tag cannot be empty.");
+      if (!/^[a-zA-Z0-9]+$/.test(newPost.tag)) {
+        throw new Error("Tag should contain only letters and numbers.");
+      }
+      if (newPost.tag.length > MAX_TAG_LENGTH) {
+        throw new Error(`Tag should not exceed ${MAX_TAG_LENGTH} characters.`);
       }
 
-      // Get current gas price
       const gasPrice = await web3!.eth.getGasPrice();
-      console.log("Current gas price:", gasPrice);
-
-      // Estimate gas
       const gasEstimate = await contract.methods.post(newPost.content, newPost.tag).estimateGas({ from: account });
-      console.log("Estimated gas:", gasEstimate);
 
-      // Send transaction
       const tx = await contract.methods.post(newPost.content, newPost.tag).send({
         from: account,
         gas: Math.floor(Number(gasEstimate) * 1.5).toString(),
@@ -208,124 +198,161 @@ export default function Home() {
       });
 
       console.log("Transaction successful:", tx);
+
       setNewPost({ content: '', tag: '' });
       await loadPosts(contract, web3!);
     } catch (error: any) {
       console.error("Transaction error:", error);
-      if (error.message.includes("User denied transaction signature")) {
-        setErrorMessage("Transaction was rejected. Please try again.");
-      } else if (error.message.includes("insufficient funds")) {
-        setErrorMessage("Insufficient funds to cover gas costs. Please add more POL to your account.");
-      } else if (error.message.includes("execution reverted")) {
-        setErrorMessage("Transaction reverted. There might be an issue with the contract. Please try again later.");
-      } else {
-        setErrorMessage(`Transaction failed: ${error.message}`);
-      }
+      setErrorMessage(error.message || "Transaction failed. Please try again.");
     } finally {
       setIsPosting(false);
     }
   };
 
-  const filteredPosts = posts.filter((post) =>
-    filter === '' || post.tag.toLowerCase().includes(filter.toLowerCase())
-  );
+  const handleSearch = () => {
+    if (contract && web3) {
+      loadPosts(contract, web3, searchTag);
+    }
+  };
 
-  const indexOfLastPost = currentPage * POSTS_PER_PAGE;
-  const indexOfFirstPost = indexOfLastPost - POSTS_PER_PAGE;
-  const currentPosts = filteredPosts.slice(indexOfFirstPost, indexOfLastPost);
-
-  const paginate = (pageNumber: number) => setCurrentPage(pageNumber);
+  const uniqueTags = Array.from(new Set(posts.map(post => post.tag)));
 
   return (
-    <div className="min-h-screen bg-gray-100 py-6 flex flex-col justify-center sm:py-12">
-      <div className="relative py-3 sm:max-w-xl sm:mx-auto">
-        <div className="absolute inset-0 bg-gradient-to-r from-cyan-400 to-light-blue-500 shadow-lg transform -skew-y-6 sm:skew-y-0 sm:-rotate-6 sm:rounded-3xl"></div>
-        <div className="relative px-4 py-10 bg-white shadow-lg sm:rounded-3xl sm:p-20">
-          <div className="max-w-md mx-auto">
-            <div>
-              <h1 className="text-2xl font-semibold">Poster DApp</h1>
-            </div>
-            <div className="divide-y divide-gray-200">
-              <div className="py-8 text-base leading-6 space-y-4 text-gray-700 sm:text-lg sm:leading-7">
-                {errorMessage && (
-                  <div className="text-red-500 text-sm mb-4">{errorMessage}</div>
-                )}
-                {!account ? (
-                  <button
-                    onClick={connectWallet}
-                    disabled={isConnecting}
-                    className="bg-blue-500 text-white px-4 py-2 rounded disabled:opacity-50"
-                  >
-                    {isConnecting ? 'Connecting...' : 'Connect Wallet'}
-                  </button>
-                ) : (
-                  <>
-                    <p>Connected: {account}</p>
-                    <div>
-                      <input
-                        type="text"
-                        placeholder="Content"
-                        value={newPost.content}
-                        onChange={(e) => setNewPost({ ...newPost, content: e.target.value })}
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                      />
-                      <input
-                        type="text"
-                        placeholder="Tag"
-                        value={newPost.tag}
-                        onChange={(e) => setNewPost({ ...newPost, tag: e.target.value })}
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                      />
-                      <button 
-                        onClick={handlePost} 
-                        className="mt-2 bg-blue-500 text-white px-4 py-2 rounded disabled:opacity-50" 
-                        disabled={isPosting || !newPost.content || !newPost.tag}
-                      >
-                        {isPosting ? 'Posting...' : 'Post'}
-                      </button>
-                    </div>
-                    <div>
-                      <input
-                        type="text"
-                        placeholder="Filter by tag"
-                        value={filter}
-                        onChange={(e) => setFilter(e.target.value)}
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                      />
-                    </div>
-                    {loadingPosts ? (
-                      <div>Loading posts...</div>
-                    ) : (
-                      <>
-                        <div>
-                          {currentPosts.map((post, index) => (
-                            <div key={index} className="border p-4 mb-2 rounded">
-                              <p className="text-sm text-gray-500">User: {post.user}</p>
-                              <p>{post.content}</p>
-                              <p className="text-sm text-blue-500">#{post.tag}</p>
-                            </div>
-                          ))}
-                        </div>
-                        <div>
-                          {Array.from({ length: Math.ceil(filteredPosts.length / POSTS_PER_PAGE) }, (_, i) => (
-                            <button 
-                              key={i} 
-                              onClick={() => paginate(i + 1)} 
-                              className={`mx-1 px-3 py-1 rounded ${currentPage === i + 1 ? 'bg-blue-700 text-white' : 'bg-blue-500 text-white'}`}
-                            >
-                              {i + 1}
-                            </button>
-                          ))}
-                        </div>
-                      </>
-                    )}
-                  </>
-                )}
+    <div className="min-h-screen bg-gradient-to-br from-purple-900 via-indigo-800 to-blue-900 text-white">
+      <header className="py-6 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto flex justify-between items-center">
+          <h1 className="text-3xl font-extrabold">Poster DApp</h1>
+          {!account ? (
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={connectWallet}
+              disabled={isConnecting}
+              className="bg-white text-purple-800 px-6 py-2 rounded-full font-semibold shadow-lg hover:bg-purple-100 transition duration-300"
+            >
+              {isConnecting ? 'Connecting...' : 'Connect Wallet'}
+            </motion.button>
+          ) : (
+            <p className="text-sm font-medium">Connected: {account.slice(0, 6)}...{account.slice(-4)}</p>
+          )}
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+        <div className="px-4 py-6 sm:px-0">
+          <AnimatePresence>
+            {errorMessage && (
+              <motion.div
+                initial={{ opacity: 0, y: -50 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -50 }}
+                className="bg-red-600 text-white p-4 rounded-lg mb-6"
+              >
+                {errorMessage}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <motion.div
+              initial={{ opacity: 0, x: -50 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: 0.2 }}
+              className="bg-white bg-opacity-10 p-6 rounded-lg shadow-xl"
+            >
+              <h2 className="text-2xl font-bold mb-4">Create a Post</h2>
+              <textarea
+                placeholder="What's on your mind?"
+                value={newPost.content}
+                onChange={(e) => setNewPost({ ...newPost, content: e.target.value })}
+                className="w-full p-3 mb-4 bg-white bg-opacity-20 rounded-md focus:ring-2 focus:ring-purple-400 focus:bg-opacity-30 transition duration-300"
+                rows={4}
+              />
+              <input
+                type="text"
+                placeholder="Add a tag (letters and numbers only, max 20 characters)"
+                value={newPost.tag}
+                onChange={(e) => setNewPost({ ...newPost, tag: e.target.value.slice(0, MAX_TAG_LENGTH) })}
+                className="w-full p-3 mb-4 bg-white bg-opacity-20 rounded-md focus:ring-2 focus:ring-purple-400 focus:bg-opacity-30 transition duration-300"
+              />
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={handlePost}
+                disabled={isPosting || !newPost.content || !newPost.tag}
+                className="w-full bg-purple-600 text-white px-6 py-3 rounded-md font-semibold shadow-lg hover:bg-purple-700 transition duration-300 disabled:opacity-50"
+              >
+                {isPosting ? 'Posting...' : 'Post'}
+              </motion.button>
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0, x: 50 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: 0.4 }}
+              className="bg-white bg-opacity-10 p-6 rounded-lg shadow-xl"
+            >
+              <h2 className="text-2xl font-bold mb-4">Search Posts</h2>
+              <div className="flex space-x-2 mb-6">
+                <input
+                  type="text"
+                  placeholder="Enter a tag to search"
+                  value={searchTag}
+                  onChange={(e) => setSearchTag(e.target.value)}
+                  className="flex-grow p-3 bg-white bg-opacity-20 rounded-md focus:ring-2 focus:ring-purple-400 focus:bg-opacity-30 transition duration-300"
+                />
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={handleSearch}
+                  disabled={isSearching}
+                  className="bg-purple-600 text-white px-6 py-3 rounded-md font-semibold shadow-lg hover:bg-purple-700 transition duration-300 disabled:opacity-50"
+                >
+                  {isSearching ? 'Searching...' : 'Search'}
+                </motion.button>
               </div>
-            </div>
+
+              <div className="mb-6">
+                <h3 className="text-xl font-semibold mb-2">All Tags:</h3>
+                <div className="flex flex-wrap gap-2">
+                  {uniqueTags.map((tag, index) => (
+                    <span key={index} className="bg-purple-500 text-white px-2 py-1 rounded-full text-sm">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {isSearching ? (
+                <div className="text-center py-8">
+                  <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-purple-500 mx-auto"></div>
+                  <p className="mt-4 text-lg">Searching posts...</p>
+                </div>
+              ) : posts.length > 0 ? (
+                <motion.div layout className="space-y-6">
+                  <AnimatePresence>
+                    {posts.map((post, index) => (
+                      <motion.div
+                        key={index}
+                        initial={{ opacity: 0, y: 50 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 50 }}
+                        className="bg-white bg-opacity-20 p-4 rounded-lg shadow-md hover:shadow-lg transition duration-300"
+                      >
+                        <p className="text-sm text-purple-300 mb-2">User: {post.user.slice(0, 6)}...{post.user.slice(-4)}</p>
+                        <p className="text-lg mb-2">{post.content}</p>
+                        <p className="text-sm text-purple-300">Tag: {post.tag}</p>
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                </motion.div>
+              ) : (
+                <p className="text-center text-lg">No posts found. Try searching for a different tag.</p>
+              )}
+            </motion.div>
           </div>
         </div>
-      </div>
+      </main>
     </div>
   );
 }
